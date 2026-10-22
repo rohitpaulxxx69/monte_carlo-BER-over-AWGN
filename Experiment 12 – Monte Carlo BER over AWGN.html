@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Experiment 12 – Monte Carlo BER over AWGN</title>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
+--bg:#f3f6fa;--panel:#fff;--ink:#14213d;--mute:#5b6b85;--line:#d4dce8;--grid:#e3e9f1;--acc:#1f4fd8;--ok:#0a7d4b;--bad:#b3261e}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0d1526;--panel:#142038;--ink:#e6ecf8;--mute:#93a3c0;--line:#26365a;--grid:#1d2c4a;--acc:#7aa2ff;--ok:#4cd694;--bad:#ff8a80}}
+:root[data-theme="dark"]{--bg:#0d1526;--panel:#142038;--ink:#e6ecf8;--mute:#93a3c0;--line:#26365a;--grid:#1d2c4a;--acc:#7aa2ff;--ok:#4cd694;--bad:#ff8a80}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*,*::before,*::after{box-sizing:inherit}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:1040px;margin:0 auto;padding:28px 18px 60px}
+h1,h2{font-family:Georgia,"Times New Roman",serif;font-weight:600;line-height:1.2}
+h1{font-size:clamp(1.8rem,4.5vw,2.7rem);margin:0 0 6px}
+h2{font-size:1.35rem;margin:38px 0 10px}
+p.lead{color:var(--mute);margin:0 0 6px;max-width:68ch}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+.ctrl{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:14px 0}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--mute);gap:4px}
+input[type=number],textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:7px 9px}
+textarea{width:100%;min-height:78px;resize:vertical}
+.mods{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
+.mods label{flex-direction:row;align-items:center;gap:6px;color:var(--ink);border:1px solid var(--line);border-radius:6px;padding:5px 10px;font-size:.9rem}
+.sw{width:11px;height:11px;border-radius:50%}
+button{font:inherit;font-weight:600;border-radius:7px;border:1px solid var(--acc);background:var(--acc);color:#fff;padding:9px 16px;cursor:pointer}
+button.alt{background:transparent;color:var(--acc)}
+button:disabled{opacity:.5;cursor:wait}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+canvas{width:100%;display:block}
+.bar{height:6px;background:var(--grid);border-radius:3px;margin-top:10px;overflow:hidden}.bar>i{display:block;height:100%;width:0;background:var(--acc)}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.status{color:var(--mute);font-size:.88rem}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--mute);font-weight:600}
+.num{font-family:ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.ok{color:var(--ok);font-weight:600}.bad{color:var(--bad);font-weight:600}
+.scroll{overflow-x:auto}
+code{font-family:ui-monospace,Menlo,monospace;background:var(--grid);padding:1px 5px;border-radius:4px;font-size:.88em}
+.params{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px}
+.params div{border-left:3px solid var(--acc);padding-left:10px;font-size:.9rem}
+</style></head><body><main>
+<h1>Monte Carlo BER over AWGN</h1>
+<p class="lead">Experiment 12. Simulate BPSK, QPSK, BFSK, 8-PSK, 16-QAM and 64-QAM, compare each against theory, and treat zero-error points as upper bounds.</p>
+
+<h2>Fixed conventions</h2>
+<div class="params panel">
+<div><b>Eb/N0 to noise</b><br>Es = 1 for every constellation. N0 = Es / (k · Eb/N0). Complex noise has variance N0; each real axis has variance σ² = N0/2.</div>
+<div><b>Bits per symbol k</b><br>BPSK 1, BFSK 1, QPSK 2, 8-PSK 3, 16-QAM 4, 64-QAM 6.</div>
+<div><b>Normalization</b><br>PSK on the unit circle. Square QAM scaled by √(2(L²−1)/3), L = √M. BFSK uses two orthogonal unit-energy dimensions, coherent detection.</div>
+<div><b>Stopping rule</b><br>Each point stops at the error limit or the bit limit, whichever comes first. Gray mapping and minimum-distance detection throughout.</div>
+</div>
+
+<h2>Run the experiment</h2>
+<div class="panel">
+<label>Expected physical effect (write this before running; it is saved with the results)
+<textarea id="expect">Each curve falls steeply as Eb/N0 rises. At equal Eb/N0, BPSK and QPSK should coincide, BFSK should sit 3 dB to the right, and 8-PSK, 16-QAM and 64-QAM should shift progressively right because their points are closer together. Theory for 8-PSK and QAM is an approximation and should be loose below about 4 dB.</textarea></label>
+<div class="ctrl">
+<div><span class="status">Modulations</span><div class="mods" id="mods"></div></div>
+</div>
+<div class="ctrl">
+<label>Eb/N0 start (dB)<input type="number" id="d0" value="0"></label>
+<label>Eb/N0 stop (dB)<input type="number" id="d1" value="14"></label>
+<label>Step (dB)<input type="number" id="ds" value="1" min="0.25" step="0.25"></label>
+<label>Stop at errors<input type="number" id="emax" value="200" min="1"></label>
+<label>Stop at bits<input type="number" id="bmax" value="1000000" min="1000"></label>
+</div>
+<div class="row"><button id="run">Run simulation</button><button class="alt" id="stop" disabled>Stop</button><button class="alt" id="val">Run mandatory validation</button><span class="status" id="st">Ready.</span></div>
+<div class="bar"><i id="prog"></i></div>
+</div>
+
+<h2>BER versus Eb/N0</h2>
+<p class="lead">Lines are theory; markers are simulation. A hollow marker with a downward tick means no errors were seen, so the plotted value is the upper bound 3/N (95 % confidence), not a measured BER.</p>
+<div class="panel"><canvas id="c1" height="460" role="img" aria-label="Semilog BER curves"></canvas><div class="row" id="legend" style="margin-top:8px"></div></div>
+
+<h2>Error count versus transmitted bits</h2>
+<p class="lead">One marker per Eb/N0 point. Points on the dashed line stopped because they reached the error limit; points to its left ran out of bits first.</p>
+<div class="panel"><canvas id="c2" height="340" role="img" aria-label="Errors versus bits"></canvas></div>
+
+<h2>Mandatory validation</h2>
+<div class="panel scroll"><table><thead><tr><th>Modulation</th><th>Very high SNR (60 dB): errors in 20 000 symbols, must be 0</th><th>Very low SNR (−40 dB): BER, must be near 0.5</th></tr></thead><tbody id="vt"><tr><td colspan="3" class="status">Press “Run mandatory validation”.</td></tr></tbody></table></div>
+
+<h2>Observation and interpretation</h2>
+<div class="panel scroll"><p class="status" id="obsnote">Results appear here after a run. A point disagrees with theory when its z-score, (sim − theory) / √(theory / N), lies outside ±3.</p>
+<table><thead><tr><th>Modulation</th><th>Points compared</th><th>Max |z|</th><th>Verdict and diagnosis</th></tr></thead><tbody id="ot"></tbody></table></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const erfc=x=>{const z=Math.abs(x),t=1/(1+.5*z);const r=t*Math.exp(-z*z-1.26551223+t*(1.00002368+t*(.37409196+t*(.09678418+t*(-.18628806+t*(.27886807+t*(-1.13520398+t*(1.48851587+t*(-.82215223+t*.17087277)))))))));return x>=0?r:2-r};
+const Q=x=>.5*erfc(x/Math.SQRT2);
+const qam=(M,e)=>{const k=Math.log2(M),L=Math.sqrt(M);return 4/k*(1-1/L)*Q(Math.sqrt(3*k*e/(M-1)))};
+const gray=n=>n^(n>>1),pop=n=>{let c=0;while(n){c+=n&1;n>>=1}return c};
+let spare=null;const g=()=>{if(spare!==null){const s=spare;spare=null;return s}let u=1-Math.random(),v=Math.random(),r=Math.sqrt(-2*Math.log(u));spare=r*Math.sin(2*Math.PI*v);return r*Math.cos(2*Math.PI*v)};
+// Each simulator returns bit errors for one symbol. sig = per-real-axis noise std = sqrt(N0/2), with N0 = Es/(k*EbN0), Es = 1.
+const axisQAM=(L,axes)=>{const norm=axes==1?1:Math.sqrt(2*(L*L-1)/3);return sig=>{let err=0;for(let a=0;a<axes;a++){const p=Math.floor(Math.random()*L),r=(2*p-(L-1))/norm+sig*g();let q=Math.round((r*norm+L-1)/2);q=q<0?0:q>L-1?L-1:q;err+=pop(gray(p)^gray(q))}return err}};
+const MODS={
+ 'BPSK':{k:1,c:'#1f4fd8',m:'circle',th:e=>Q(Math.sqrt(2*e)),sym:axisQAM(2,1)},
+ 'QPSK':{k:2,c:'#e07b00',m:'square',th:e=>Q(Math.sqrt(2*e)),sym:axisQAM(2,2)},
+ 'BFSK':{k:1,c:'#0a9b6b',m:'tri',th:e=>Q(Math.sqrt(e)),sym:sig=>{const p=Math.random()<.5?1:0;const r0=(p?0:1)+sig*g(),r1=(p?1:0)+sig*g();return ((r1>r0)?1:0)!==p?1:0}},
+ '8-PSK':{k:3,c:'#c2338a',m:'diamond',th:e=>2/3*Q(Math.sqrt(6*e)*Math.sin(Math.PI/8)),sym:sig=>{const p=Math.floor(Math.random()*8),t=p*Math.PI/4;const f=Math.atan2(Math.sin(t)+sig*g(),Math.cos(t)+sig*g());const q=((Math.round(f/(Math.PI/4))%8)+8)%8;return pop(gray(p)^gray(q))}},
+ '16-QAM':{k:4,c:'#7a4fd6',m:'cross',th:e=>qam(16,e),sym:axisQAM(4,2)},
+ '64-QAM':{k:6,c:'#b3261e',m:'plus',th:e=>qam(64,e),sym:axisQAM(8,2)}};
+const sigmaFor=(name,dB)=>{const e=Math.pow(10,dB/10),N0=1/(MODS[name].k*e);return Math.sqrt(N0/2)};
+$('mods').innerHTML=Object.keys(MODS).map(n=>`<label><input type="checkbox" value="${n}" checked><span class="sw" style="background:${MODS[n].c}"></span>${n}</label>`).join('');
+$('legend').innerHTML=Object.keys(MODS).map(n=>`<span class="status"><span class="sw" style="display:inline-block;background:${MODS[n].c}"></span> ${n}</span>`).join('');
+let results={},running=false,cancel=false;
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+function shape(ctx,m,x,y,r,hollow){ctx.beginPath();if(m=='circle')ctx.arc(x,y,r,0,7);else if(m=='square')ctx.rect(x-r,y-r,2*r,2*r);else if(m=='tri'){ctx.moveTo(x,y-r*1.2);ctx.lineTo(x+r*1.1,y+r*.9);ctx.lineTo(x-r*1.1,y+r*.9);ctx.closePath()}else if(m=='diamond'){ctx.moveTo(x,y-r*1.3);ctx.lineTo(x+r*1.1,y);ctx.lineTo(x,y+r*1.3);ctx.lineTo(x-r*1.1,y);ctx.closePath()}else if(m=='cross'){ctx.moveTo(x-r,y-r);ctx.lineTo(x+r,y+r);ctx.moveTo(x+r,y-r);ctx.lineTo(x-r,y+r)}else{ctx.moveTo(x-r,y);ctx.lineTo(x+r,y);ctx.moveTo(x,y-r);ctx.lineTo(x,y+r)}
+ if(m=='cross'||m=='plus'){ctx.stroke()}else if(hollow){ctx.save();ctx.fillStyle=css('--panel');ctx.fill();ctx.restore();ctx.stroke()}else{ctx.fill()}}
+function chart(cv,o){const dpr=devicePixelRatio||1,W=cv.clientWidth,H=+cv.getAttribute('height');cv.width=W*dpr;cv.height=H*dpr;const x=cv.getContext('2d');x.scale(dpr,dpr);
+ const P={l:62,r:16,t:14,b:44},w=W-P.l-P.r,h=H-P.t-P.b;
+ const fx=o.xlog?v=>Math.log10(v):v=>v,fy=o.ylog?v=>Math.log10(v):v=>v;
+ const X=v=>P.l+(fx(v)-fx(o.x0))/(fx(o.x1)-fx(o.x0))*w,Y=v=>P.t+h-(fy(v)-fy(o.y0))/(fy(o.y1)-fy(o.y0))*h;
+ x.font='12px system-ui';x.fillStyle=css('--mute');x.strokeStyle=css('--grid');x.lineWidth=1;
+ const xt=o.xlog?[]:o.xticks,yt=o.ylog?[]:o.yticks;
+ if(o.xlog)for(let e=Math.log10(o.x0);e<=Math.log10(o.x1);e++)xt.push(Math.pow(10,e));
+ if(o.ylog)for(let e=Math.log10(o.y0);e<=Math.log10(o.y1);e++)yt.push(Math.pow(10,e));
+ x.textAlign='center';xt.forEach(v=>{const px=X(v);x.beginPath();x.moveTo(px,P.t);x.lineTo(px,P.t+h);x.stroke();x.fillText(o.xlog?'10^'+Math.round(Math.log10(v)):v,px,P.t+h+16)});
+ x.textAlign='right';yt.forEach(v=>{const py=Y(v);x.beginPath();x.moveTo(P.l,py);x.lineTo(P.l+w,py);x.stroke();x.fillText(o.ylog?'10^'+Math.round(Math.log10(v)):v,P.l-8,py+4)});
+ x.strokeStyle=css('--line');x.strokeRect(P.l,P.t,w,h);
+ x.textAlign='center';x.fillText(o.xl,P.l+w/2,H-6);x.save();x.translate(14,P.t+h/2);x.rotate(-Math.PI/2);x.fillText(o.yl,0,0);x.restore();
+ x.save();x.beginPath();x.rect(P.l,P.t,w,h);x.clip();
+ if(o.hline){x.setLineDash([6,4]);x.strokeStyle=css('--mute');x.beginPath();x.moveTo(P.l,Y(o.hline));x.lineTo(P.l+w,Y(o.hline));x.stroke();x.setLineDash([])}
+ (o.lines||[]).forEach(s=>{x.strokeStyle=s.c;x.lineWidth=1.6;x.beginPath();let f=1;s.pts.forEach(p=>{if(p.y<o.y0){f=1;return}const px=X(p.x),py=Y(p.y);f?x.moveTo(px,py):x.lineTo(px,py);f=0});x.stroke()});
+ (o.marks||[]).forEach(s=>{x.strokeStyle=s.c;x.fillStyle=s.c;x.lineWidth=1.8;s.pts.forEach(p=>{const px=X(p.x),py=Math.max(P.t,Math.min(P.t+h,Y(p.y)));shape(x,s.m,px,py,4.2,p.ub);if(p.ub){x.beginPath();x.moveTo(px,py+6);x.lineTo(px,py+14);x.moveTo(px-3,py+11);x.lineTo(px,py+14);x.lineTo(px+3,py+11);x.stroke()}})});
+ x.restore()}
+function draw(){const names=Object.keys(results);const d1=+$('d1').value,d0=+$('d0').value;
+ const lines=[],marks=[],m2=[];
+ names.forEach(n=>{const M=MODS[n],R=results[n];const th=[];for(let d=d0;d<=d1+1e-9;d+=.1)th.push({x:d,y:M.th(Math.pow(10,d/10))});
+  lines.push({c:M.c,pts:th});marks.push({c:M.c,m:M.m,pts:R.map(r=>({x:r.d,y:r.err>0?r.err/r.bits:3/r.bits,ub:r.err==0}))});
+  m2.push({c:M.c,m:M.m,pts:R.map(r=>({x:r.bits,y:r.err}))})});
+ const xt=[];for(let d=Math.ceil(d0);d<=d1;d+=Math.max(1,Math.round((d1-d0)/10)))xt.push(d);
+ chart($('c1'),{x0:d0,x1:Math.max(d1,d0+1),y0:1e-7,y1:1,ylog:true,xticks:xt,yticks:[],xl:'Eb/N0 (dB)',yl:'Bit error rate',lines,marks});
+ chart($('c2'),{x0:100,x1:Math.max(1e6,+$('bmax').value),y0:0,y1:Math.max(+$('emax').value*1.1,10),xlog:true,xticks:[],yticks:[0,50,100,150,200],xl:'Transmitted bits',yl:'Errors counted',hline:+$('emax').value,marks:m2})}
+const tick=()=>new Promise(r=>setTimeout(r,0));
+async function point(n,dB,emax,bmax){const M=MODS[n],sig=sigmaFor(n,dB);let err=0,bits=0;while(err<emax&&bits<bmax&&!cancel){for(let i=0;i<5000;i++){err+=M.sym(sig);bits+=M.k}await tick()}return{d:dB,err,bits}}
+$('run').onclick=async()=>{if(running)return;if(!$('expect').value.trim()){$('st').textContent='Write the expected physical effect first.';$('expect').focus();return}
+ const sel=[...document.querySelectorAll('#mods input:checked')].map(i=>i.value);if(!sel.length){$('st').textContent='Select at least one modulation.';return}
+ const d0=+$('d0').value,d1=+$('d1').value,ds=Math.max(.25,+$('ds').value),emax=+$('emax').value,bmax=+$('bmax').value;
+ const dBs=[];for(let d=d0;d<=d1+1e-9;d+=ds)dBs.push(+d.toFixed(4));
+ running=true;cancel=false;results={};$('run').disabled=true;$('stop').disabled=false;$('ot').innerHTML='';
+ const total=sel.length*dBs.length;let done=0;
+ for(const n of sel){results[n]=[];for(const d of dBs){if(cancel)break;$('st').textContent=`${n} at ${d} dB`;const r=await point(n,d,emax,bmax);results[n].push(r);done++;$('prog').style.width=(100*done/total)+'%';draw()}}
+ running=false;$('run').disabled=false;$('stop').disabled=true;$('st').textContent=cancel?'Stopped.':'Done.';interpret(emax)};
+$('stop').onclick=()=>{cancel=true};
+const DIAG={'8-PSK':'Theory is the Gray-coded nearest-neighbour approximation (2/3)·Q(√(6·Eb/N0)·sin(π/8)). It ignores errors to non-adjacent points, so it is optimistic at low Eb/N0.','16-QAM':'Theory is the standard Gray-coded approximation. It double-counts corner errors at low SNR and is tight only above roughly 6 dB.','64-QAM':'Theory is the standard Gray-coded approximation, loose below roughly 10 dB where many neighbours contribute.'};
+function interpret(emax){const rows=[];for(const n in results){const M=MODS[n];let mz=0,c=0,bad=[];results[n].forEach(r=>{if(r.err==0)return;const t=M.th(Math.pow(10,r.d/10)),z=(r.err/r.bits-t)/Math.sqrt(t/r.bits);c++;if(Math.abs(z)>mz)mz=Math.abs(z);if(Math.abs(z)>3)bad.push(r.d)});
+  const ub=results[n].filter(r=>r.err==0).length;
+  let v=bad.length?`<span class="bad">Disagrees at ${bad.join(', ')} dB.</span> `+(DIAG[n]||'Check the noise-variance conversion and the detector. A constant dB offset points to a variance error; a constant factor points to a bit-mapping error.'):`<span class="ok">Agrees with theory</span> at every measured point.`;
+  if(ub)v+=` ${ub} point(s) had zero errors and are upper bounds only.`;
+  rows.push(`<tr><td>${n}</td><td class="num">${c}</td><td class="num">${mz.toFixed(2)}</td><td>${v}</td></tr>`)}
+ $('ot').innerHTML=rows.join('');$('obsnote').textContent='Your saved expectation: “'+$('expect').value.trim().slice(0,220)+'”. Compare it with the verdicts below. The diagnostic test is the binomial z-score, which separates statistical noise from a modelling discrepancy.'}
+$('val').onclick=async()=>{$('val').disabled=true;const rows=[];for(const n in MODS){const M=MODS[n];let hi=0,lo=0,lb=0;const sh=sigmaFor(n,60),sl=sigmaFor(n,-40);for(let i=0;i<20000;i++)hi+=M.sym(sh);for(let i=0;i<50000;i++){lo+=M.sym(sl);lb+=M.k}await tick();const ber=lo/lb,p1=hi==0,p2=Math.abs(ber-.5)<.02;
+  rows.push(`<tr><td>${n}</td><td><span class="${p1?'ok':'bad'}">${hi} errors, ${p1?'pass':'fail'}</span></td><td><span class="${p2?'ok':'bad'}"><span class="num">${ber.toFixed(4)}</span>, ${p2?'pass':'fail'}</span></td></tr>`)}
+ $('vt').innerHTML=rows.join('');$('val').disabled=false};
+addEventListener('resize',()=>{if(Object.keys(results).length)draw();else drawEmpty()});
+function drawEmpty(){results={};draw()}
+drawEmpty();
+</script></body></html>
